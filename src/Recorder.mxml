@@ -1,0 +1,247 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:Application xmlns:fx="http://ns.adobe.com/mxml/2009"
+			   xmlns:s="library://ns.adobe.com/flex/spark" 
+			   xmlns:mx="library://ns.adobe.com/flex/mx" minWidth="955" minHeight="600" initialize="application1_initializeHandler(event)" width="155" height="124" alpha="0">
+
+	<fx:Script>
+		<![CDATA[
+			import com.adobe.audio.format.WAVWriter;
+			
+			import flash.events.SampleDataEvent;
+			import flash.external.ExternalInterface;
+			import flash.media.Microphone;
+			import flash.media.Sound;
+			import flash.media.SoundChannel;
+			import flash.utils.ByteArray;
+			
+			import mx.collections.ArrayCollection;
+			import mx.controls.dataGridClasses.DataGridColumn;
+			import mx.events.FlexEvent;
+			
+			import ru.inspirit.net.MultipartURLLoader;
+			
+			[Bindable]
+			protected var voiceNotes:ArrayCollection;
+			
+			[Bindable]
+			protected var isRecording:Boolean = false;
+			
+			[Bindable]
+			protected var isPlaying:Boolean = false;
+			
+			
+			protected var microphone:Microphone;
+			protected var soundClip:ByteArray;
+			protected var sound:Sound;
+			protected var channel:SoundChannel;
+			
+			protected var postURI:String;
+			protected var debugLog:Array = new Array();
+			
+			protected function application1_initializeHandler(event:FlexEvent):void
+			{
+				if (ExternalInterface.available) {
+					ExternalInterface.addCallback("sendToActionScript", handleSendToActionScript);
+					debug('ExternalInterface setup!');
+				}else{
+					debug('ExternalInterface NOT available');
+				}
+			}
+			
+			protected function handleSendToActionScript(message:String)
+			{
+				try{
+				var args:Array = message.split(' ');
+				var command:String = args[0];
+				var response;
+				
+				debug('received: ' + message);
+				switch(command){
+					case 'startPlaying':
+						startPlaying();
+						break;
+					case 'stopPlaying':
+						stopPlaying();
+						break;
+					case 'startRecording':
+						startRecording();
+						break;
+					case 'stopRecording':
+						stopRecording();
+						break;
+					case 'post':
+						post(args[1]);
+						break;
+					case 'setup':
+						setup();
+						break;
+					case 'getDebugLog':
+						response = getDebugLog();
+						break;
+					default:
+						debug('Could not handle: ' + message);
+				}	
+				
+				return response;
+				
+				}catch(e:Error){
+					debug(e.message);
+				}
+			}
+			
+			protected function getDebugLog():Array
+			{
+				return debugLog;
+			}
+				
+			protected function post(uri:String)
+			{
+				postURI = uri
+				soundClip.position = 0;
+				debug('converting to wav');
+				var wavData:ByteArray = convertToWav();
+				debug('posting to: ' + uri);
+				postClipToURI(wavData);
+			}
+
+			protected function postClipToURI(clip:ByteArray):void
+			{
+				var ml:MultipartURLLoader = new MultipartURLLoader();
+				ml.addEventListener(Event.COMPLETE, onReady);
+				function onReady(e:Event):void
+				{
+					debug('posting done');
+				}
+				
+				ml.addVariable('track[sharing]', 'public');		
+				ml.addVariable('track[title]', 'Record');
+				ml.addFile(clip, 'recording.pcm', 'track[asset_data]');
+				
+				ml.load(postURI, false);
+			
+			}
+			
+			protected function convertToWav():ByteArray
+			{
+				var wavData:ByteArray = new ByteArray();
+				var wavWriter:WAVWriter = new WAVWriter(); 
+				soundClip.position = 0;
+				wavWriter.numOfChannels = 1; // set the inital properties of the Wave Writer 
+				wavWriter.sampleBitRate = 16; 
+				wavWriter.samplingRate = 44100; 
+				wavWriter.processSamples(wavData, soundClip, 44100, 1);
+				return wavData;
+			}
+			
+			protected function toggleRecording():void
+			{
+				if (isRecording)
+				{
+					isRecording = false;
+					stopRecording();
+				}
+				else
+				{
+					isRecording = true;
+					startRecording();
+				}
+			}
+			
+			protected function setup():void
+			{
+				debug('setup');
+				microphone = Microphone.getMicrophone();
+				microphone.rate = 44;
+				microphone.gain = 100;
+				debug('mic: ' + microphone.name);
+			}
+			
+			protected function startRecording():void
+			{
+				debug('recon');
+				isRecording = true;
+				soundClip = new ByteArray();
+				microphone.addEventListener(SampleDataEvent.SAMPLE_DATA, microphone_sampleDataHandler);
+				debug('!');
+			}
+			
+			protected function stopRecording():void
+			{
+				debug('recoff');
+				isRecording = false;
+				microphone.removeEventListener(SampleDataEvent.SAMPLE_DATA, microphone_sampleDataHandler);
+				debug('!');
+			}
+			
+			
+			var sampleI:int = 0;
+			protected function microphone_sampleDataHandler(event:SampleDataEvent):void
+			{
+				sampleI++;
+				
+				if(sampleI % 10 == 0){
+					debug('sample: ' + event.data.length.toString());
+				}
+				
+				while(event.data.bytesAvailable)
+				{
+					var sample:Number = event.data.readFloat();
+					soundClip.writeFloat(sample);
+				}
+			}
+			
+			protected function startPlaying():void
+			{
+				debug('playon');
+				isPlaying = true;
+				soundClip.position = 0;
+				sound = new Sound();
+				sound.addEventListener(SampleDataEvent.SAMPLE_DATA, sound_sampleDataHandler);
+				channel = sound.play();
+				channel.addEventListener(Event.SOUND_COMPLETE, soundCompleteHandler);     
+				debug('!');
+			}
+			
+			protected function stopPlaying():void
+			{
+				debug('playoff');
+				channel.stop();
+				isPlaying = false;
+				debug('!');
+			}
+			
+			protected function sound_sampleDataHandler(event:SampleDataEvent):void
+			{
+				if (!soundClip.bytesAvailable > 0)
+				{
+					return;
+				}
+				
+				for (var i:int = 0; i < 8192; i++)
+				{
+					var sample:Number = 0;
+					if (soundClip.bytesAvailable > 0)
+					{
+						sample = soundClip.readFloat();
+					}
+					event.data.writeFloat(sample); 
+					event.data.writeFloat(sample);  
+				}
+			}
+			
+			protected function soundCompleteHandler(event:Event):void
+			{
+				isPlaying = false;
+			}
+			
+			protected function debug(message:String):void
+			{
+				debugLog.push(message);
+			}
+		]]>
+	</fx:Script>
+
+	<fx:Declarations>
+		<!-- Place non-visual elements (e.g., services, value objects) here -->
+	</fx:Declarations>
+</s:Application>
