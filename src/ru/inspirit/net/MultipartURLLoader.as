@@ -25,7 +25,14 @@
 	 * Original idea by Marston Development Studio - http://marstonstudio.com/?p=36
 	 *
 	 * History
-	 * 2009.01.15 version 1.0
+	 * \
+	 * 
+
+ * \
+ * 	
+ * \
+ *  ?.,n
+ * ?azAaAAa* 2009.01.15 version 1.0
 	 * Initial release
 	 *
 	 * 2009.01.19 version 1.1

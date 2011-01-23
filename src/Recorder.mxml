@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <s:Application xmlns:fx="http://ns.adobe.com/mxml/2009"
 			   xmlns:s="library://ns.adobe.com/flex/spark" 
-			   xmlns:mx="library://ns.adobe.com/flex/mx" minWidth="955" minHeight="600" initialize="application1_initializeHandler(event)" width="155" height="124" alpha="0">
+			   xmlns:mx="library://ns.adobe.com/flex/mx" minWidth="955" minHeight="600" initialize="application1_initializeHandler(event)" width="155" height="124" alpha="0" usePreloader="false">
 
 	<fx:Script>
 		<![CDATA[
@@ -13,6 +13,8 @@
 			import flash.media.Sound;
 			import flash.media.SoundChannel;
 			import flash.utils.ByteArray;
+			
+			import fr.kikko.lab.ShineMP3Encoder;
 			
 			import mx.collections.ArrayCollection;
 			import mx.controls.dataGridClasses.DataGridColumn;
@@ -29,23 +31,30 @@
 			[Bindable]
 			protected var isPlaying:Boolean = false;
 			
-			
+			protected var microphoneWasMuted:Boolean;
+
 			protected var microphone:Microphone;
 			protected var soundClip:ByteArray;
 			protected var sound:Sound;
 			protected var channel:SoundChannel;
-			
+			protected var callbackRegistry:Object;
 			protected var postURI:String;
 			protected var debugLog:Array = new Array();
-			
+			protected var mp3Encoder:ShineMP3Encoder;
 			protected function application1_initializeHandler(event:FlexEvent):void
 			{
 				if (ExternalInterface.available) {
 					ExternalInterface.addCallback("sendToActionScript", handleSendToActionScript);
 					debug('ExternalInterface setup!');
+					try{
+						triggerCallbacks('initialized', {});
+					}catch(e:Error){
+						debug(e.message + "\n" + e.getStaceTrace());
+					}
 				}else{
 					debug('ExternalInterface NOT available');
 				}
+				
 			}
 			
 			protected function handleSendToActionScript(message:String)
@@ -55,67 +64,91 @@
 				var command:String = args[0];
 				var response;
 				
-				debug('received: ' + message);
-				switch(command){
-					case 'startPlaying':
-						startPlaying();
-						break;
-					case 'stopPlaying':
-						stopPlaying();
-						break;
-					case 'startRecording':
-						startRecording();
-						break;
-					case 'stopRecording':
-						stopRecording();
-						break;
-					case 'post':
-						post(args[1]);
-						break;
-					case 'setup':
-						setup();
-						break;
-					case 'getDebugLog':
-						response = getDebugLog();
-						break;
-					default:
-						debug('Could not handle: ' + message);
-				}	
+				if(args.length > 1){
+					response = this[command].call(args[1]);
+				}else{
+					response = this[command].call();
+				}
 				
 				return response;
 				
 				}catch(e:Error){
-					debug(e.message);
+					debug("Exception: " + e.message);
+					debug(e.getStaceTrace());
 				}
+			}
+			
+			
+			protected function test():void
+			{
+			   debug('test');
+			}
+			
+			protected function triggerCallbacks(eventName:String, arg):void
+			{	
+				ExternalInterface.call("RecButton.trigger", eventName, arg);
 			}
 			
 			protected function getDebugLog():Array
 			{
 				return debugLog;
 			}
+			
+			private function mp3EncodeProgress(event : ProgressEvent) : void {
+				//trace(event.bytesLoaded, event.bytesTotal);
+			}
+			
+			private function mp3EncodeError(event : ErrorEvent) : void {
+				debug("Error : " + event.text);
+			}
+			
+			private function mp3EncodeComplete(event : Event) : void {
+				debug("Done !" + mp3Encoder.mp3Data.length);
+				//debug('posting');
+				//postClipToURI(mp3Encoder.mp3Data);
+			}
 				
 			protected function post(uri:String)
 			{
 				postURI = uri
 				soundClip.position = 0;
+				
+				
 				debug('converting to wav');
 				var wavData:ByteArray = convertToWav();
-				debug('posting to: ' + uri);
+				debug('converting to mp3');
+				
+				//encodeToMP3(wavData);
+				
+				//debug('converting to wav');
+				//var wavData:ByteArray = convertToWav();
+				//debug('posting to: ' + uri);
 				postClipToURI(wavData);
 			}
 
+			protected function encodeToMP3(wavData:ByteArray):void {	
+				mp3Encoder = new ShineMP3Encoder(wavData);
+				mp3Encoder.addEventListener(Event.COMPLETE, mp3EncodeComplete);
+				//mp3Encoder.addEventListener(ProgressEvent.PROGRESS, mp3EncodeProgress);
+				mp3Encoder.addEventListener(ErrorEvent.ERROR, mp3EncodeError);
+				debug('ready to encode');
+				mp3Encoder.start();
+			}
+			
 			protected function postClipToURI(clip:ByteArray):void
 			{
 				var ml:MultipartURLLoader = new MultipartURLLoader();
 				ml.addEventListener(Event.COMPLETE, onReady);
 				function onReady(e:Event):void
 				{
+					triggerCallbacks('uploadComplete', e);
 					debug('posting done');
 				}
 				
 				ml.addVariable('track[sharing]', 'public');		
-				ml.addVariable('track[title]', 'Record');
-				ml.addFile(clip, 'recording.pcm', 'track[asset_data]');
+				ml.addVariable('track[title]', 'Recording');
+				ml.addVariable('track[description]', 'Recorded with <a href="http://recbutton.com">RecButton.com</a>.');
+				ml.addFile(clip, 'recbutton.wav', 'track[asset_data]');
 				
 				ml.load(postURI, false);
 			
@@ -126,7 +159,7 @@
 				var wavData:ByteArray = new ByteArray();
 				var wavWriter:WAVWriter = new WAVWriter(); 
 				soundClip.position = 0;
-				wavWriter.numOfChannels = 1; // set the inital properties of the Wave Writer 
+				wavWriter.numOfChannels = 2; // set the inital properties of the Wave Writer 
 				wavWriter.sampleBitRate = 16; 
 				wavWriter.samplingRate = 44100; 
 				wavWriter.processSamples(wavData, soundClip, 44100, 1);
@@ -151,35 +184,80 @@
 			{
 				debug('setup');
 				microphone = Microphone.getMicrophone();
+				microphone.setSilenceLevel(0);
 				microphone.rate = 44;
-				microphone.gain = 100;
-				debug('mic: ' + microphone.name);
+				microphone.gain = 50;
+				microphone.addEventListener(StatusEvent.STATUS, statusHandler);
+				
+				microphoneWasMuted = microphone.muted;
+				if(microphoneWasMuted){
+					debug('showFlashRequired');
+					triggerCallbacks('showFlash','');
+
+					//triggerCallbacks('microphoneForbidden');
+				} 
+				
+				debug('mic: ' + microphone.name + ' ' + microphone.muted);
+			}
+			
+			protected function statusHandler(e:Event):void
+			{
+				debug('statusHandler');
+				if(!microphone.muted){
+					if(!isRecording){
+						startRecordingSrsly();
+					}
+				}
+			}
+			
+			protected function startRecordingSrsly():void
+			{
+				if(microphoneWasMuted){
+					microphoneWasMuted = false;
+					triggerCallbacks('hideFlash','');
+				}
+				triggerCallbacks('recordingStart', {});
+				debug('startRecording');
+				isRecording = true;
+				sampleCount = 0;
 			}
 			
 			protected function startRecording():void
 			{
-				debug('recon');
-				isRecording = true;
+				if(!microphone){ 
+					setup();
+				}
+				
+				if(!microphone.muted){
+					startRecordingSrsly();
+				}else{
+					triggerCallbacks(' ', {});
+				}				
+				
 				soundClip = new ByteArray();
 				microphone.addEventListener(SampleDataEvent.SAMPLE_DATA, microphone_sampleDataHandler);
-				debug('!');
 			}
 			
 			protected function stopRecording():void
 			{
 				debug('recoff');
 				isRecording = false;
+				triggerCallbacks('recordingStop', {});
 				microphone.removeEventListener(SampleDataEvent.SAMPLE_DATA, microphone_sampleDataHandler);
 				debug('!');
 			}
 			
 			
-			var sampleI:int = 0;
+			var sampleCount:int;
 			protected function microphone_sampleDataHandler(event:SampleDataEvent):void
 			{
-				sampleI++;
+			//	if(sampleCount <= 1){ // FIXME 1 doesnt make sense?
+			//		triggerCallbacks('recordingStart', event.data.length);
+			//	}
 				
-				if(sampleI % 10 == 0){
+				sampleCount++;
+				
+				if(sampleCount % 10 == 0){
 					debug('sample: ' + event.data.length.toString());
 				}
 				
@@ -194,6 +272,7 @@
 			{
 				debug('playon');
 				isPlaying = true;
+				triggerCallbacks('playingStart', {});
 				soundClip.position = 0;
 				sound = new Sound();
 				sound.addEventListener(SampleDataEvent.SAMPLE_DATA, sound_sampleDataHandler);
@@ -205,9 +284,12 @@
 			protected function stopPlaying():void
 			{
 				debug('playoff');
+				if(channel){
 				channel.stop();
+				triggerCallbacks('playingStop', {});
 				isPlaying = false;
 				debug('!');
+				}
 			}
 			
 			protected function sound_sampleDataHandler(event:SampleDataEvent):void
@@ -231,11 +313,13 @@
 			
 			protected function soundCompleteHandler(event:Event):void
 			{
+				triggerCallbacks('playingStop', {});
 				isPlaying = false;
 			}
 			
 			protected function debug(message:String):void
 			{
+				triggerCallbacks('debug', {message: message});
 				debugLog.push(message);
 			}
 		]]>
