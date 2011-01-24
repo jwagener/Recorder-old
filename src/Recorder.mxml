@@ -1,17 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <s:Application xmlns:fx="http://ns.adobe.com/mxml/2009"
 			   xmlns:s="library://ns.adobe.com/flex/spark" 
-			   xmlns:mx="library://ns.adobe.com/flex/mx" minWidth="955" minHeight="600" initialize="application1_initializeHandler(event)" width="155" height="124" alpha="0" usePreloader="false">
+			   xmlns:mx="library://ns.adobe.com/flex/mx" minWidth="955" minHeight="600" initialize="application1_initializeHandler(event)" width="155" height="124" alpha="0" usePreloader="false" error="application1_errorHandler(event)">
 
 	<fx:Script>
 		<![CDATA[
 			import com.adobe.audio.format.WAVWriter;
+			import com.adobe.serialization.json.JSON;
 			
+			import flash.display.Sprite;
+			import flash.events.ErrorEvent;
 			import flash.events.SampleDataEvent;
 			import flash.external.ExternalInterface;
 			import flash.media.Microphone;
 			import flash.media.Sound;
 			import flash.media.SoundChannel;
+			import flash.system.Capabilities;
 			import flash.utils.ByteArray;
 			
 			import fr.kikko.lab.ShineMP3Encoder;
@@ -41,10 +45,28 @@
 			protected var postURI:String;
 			protected var debugLog:Array = new Array();
 			protected var mp3Encoder:ShineMP3Encoder;
+			
+			function onUncaughtError():void
+			{}
+			
 			protected function application1_initializeHandler(event:FlexEvent):void
 			{
+		
+			///	ErrorEven
+			//	loaderInfo.addEventListener(
+			//LoaderInfo.
+			//	loaderInfo.uncaughtErrorEvents.addEventListener(UncaughtErrorEvent.UNCAUGHT_ERROR, onUncaughtError);
+			//	loaderInfo.addEventListener(UncaughtErrorEvent.UNCAUGHT_ERROR, onUncaughtError);
 				if (ExternalInterface.available) {
-					ExternalInterface.addCallback("sendToActionScript", handleSendToActionScript);
+					ExternalInterface.addCallback("startRecording", startRecording);
+					ExternalInterface.addCallback("stopRecording", stopRecording);
+					ExternalInterface.addCallback("startPlaying", startPlaying);
+					ExternalInterface.addCallback("stopPlaying", stopPlaying);
+					ExternalInterface.addCallback("upload", upload);
+					ExternalInterface.addCallback("getDebugLog", getDebugLog);
+
+					ExternalInterface.addCallback("debug", debug2);
+
 					debug('ExternalInterface setup!');
 					try{
 						triggerCallbacks('initialized', {});
@@ -55,33 +77,6 @@
 					debug('ExternalInterface NOT available');
 				}
 				
-			}
-			
-			protected function handleSendToActionScript(message:String)
-			{
-				try{
-				var args:Array = message.split(' ');
-				var command:String = args[0];
-				var response;
-				
-				if(args.length > 1){
-					response = this[command].call(args[1]);
-				}else{
-					response = this[command].call();
-				}
-				
-				return response;
-				
-				}catch(e:Error){
-					debug("Exception: " + e.message);
-					debug(e.getStaceTrace());
-				}
-			}
-			
-			
-			protected function test():void
-			{
-			   debug('test');
 			}
 			
 			protected function triggerCallbacks(eventName:String, arg):void
@@ -107,23 +102,17 @@
 				//debug('posting');
 				//postClipToURI(mp3Encoder.mp3Data);
 			}
-				
-			protected function post(uri:String)
+
+			
+			protected function upload(uri:String, attributes:Object): void
 			{
-				postURI = uri
+				postURI = uri;
+				// be kind rewind!
 				soundClip.position = 0;
-				
-				
 				debug('converting to wav');
 				var wavData:ByteArray = convertToWav();
-				debug('converting to mp3');
-				
-				//encodeToMP3(wavData);
-				
-				//debug('converting to wav');
-				//var wavData:ByteArray = convertToWav();
-				//debug('posting to: ' + uri);
-				postClipToURI(wavData);
+					
+				postClipToURI(wavData, attributes);
 			}
 
 			protected function encodeToMP3(wavData:ByteArray):void {	
@@ -135,7 +124,7 @@
 				mp3Encoder.start();
 			}
 			
-			protected function postClipToURI(clip:ByteArray):void
+			protected function postClipToURI(clip:ByteArray, parameters:Object):void
 			{
 				var ml:MultipartURLLoader = new MultipartURLLoader();
 				ml.addEventListener(Event.COMPLETE, onReady);
@@ -145,11 +134,13 @@
 					debug('posting done');
 				}
 				
-				ml.addVariable('track[sharing]', 'public');		
-				ml.addVariable('track[title]', 'Recording');
-				ml.addVariable('track[description]', 'Recorded with <a href="http://recbutton.com">RecButton.com</a>.');
-				ml.addFile(clip, 'recbutton.wav', 'track[asset_data]');
+				for(var k in parameters){
+					ml.addVariable(k, parameters[k]);		
+				}
 				
+				debug('p3');
+				ml.addFile(clip, 'recbutton.wav', 'track[asset_data]');
+				debug('p4');
 				ml.load(postURI, false);
 			
 			}
@@ -322,6 +313,38 @@
 				triggerCallbacks('debug', {message: message});
 				debugLog.push(message);
 			}
+			
+			protected function debug2(message:String, params:Object):String
+			{
+				try {
+				debug('debug2');
+				triggerCallbacks('debug', {'message': message});
+				debugLog.push(message);
+				debug('try 2');
+				postURI = message;
+				// be kind rewind!
+				if(soundClip){
+					debug('clip');
+
+					soundClip.position = 0;
+				}
+				debug('soundC');
+				debug('converting to wav');
+				var wavData:ByteArray = convertToWav();
+				debug('uploading');
+				postClipToURI(wavData, params);
+				}catch(e:Error){
+					debug(e.getStackTrace());
+				  debug(e.toString());
+				}
+			return(message);
+			}
+
+			protected function application1_errorHandler(event:ErrorEvent):void
+			{
+				debug('err');
+			}
+
 		]]>
 	</fx:Script>
 
